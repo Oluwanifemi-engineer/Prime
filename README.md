@@ -115,6 +115,26 @@ mobility was quoted at. The ohmic field assumption is made checkable separately 
 `check_ohmic_field`, because it depends on the operating current, which the
 resistance itself does not.
 
+### `prime/models/forward_injection.py` — the ideal diffusion diode
+
+`I = I_s (exp(V/V_T) − 1)` with `I_s = qA(D_p p_n0/L_p + D_n n_p0/L_n)`, valid from
+0.1 V to 0.75 V at 300 K. Below 0.1 V the generation-recombination current dominates
+and ideality factor 1 is wrong; above it, high-level injection breaks the derivation.
+
+This model is a **replacement**, not an extension: a different set of relations, a
+different regime, a different list of things that can go wrong. Prime has no
+mechanism for widening an existing model's range, and that is the point — at 0.6 V
+the depletion model reports `extrapolated` rather than being stretched, and nothing
+inherits its answer.
+
+The high-level-injection gate is quantitative: it compares the injected minority
+density `p_n0 exp(V/V_T)` against the majority doping. For the example device it
+trips at about 0.72 V, and above it **neither** model applies. A boundary map whose
+honest output is an empty region is worth more than one that always has an answer.
+
+It also carries the only readout floor so far: `measurement_bandwidth_hz` is optional,
+because a shot-noise limit is a property of the measurement, not of the device.
+
 ### `prime/models/composition.py` — junction in series with series resistance
 
 The two models are valid under *different* assumptions, so they cannot be merged
@@ -132,8 +152,9 @@ Composition enforces three things:
 ## Usage
 
 ```bash
-python -m pytest -q                        # 43 tests
+python -m pytest -q                        # 58 tests
 python -m examples.junction_capacitance    # claim -> predictions -> verdict
+python -m examples.forward_bias            # replacement, and the edge of the map
 ```
 
 ```python
@@ -167,11 +188,22 @@ An extension is admissible only if it fills in the same records and can state:
 
 If a feature cannot say those things, it does not belong yet.
 
+## The boundary map so far
+
+| Case | Model | Dies at |
+|---|---|---|
+| 1 | Depletion capacitance | forward bias > 0.3 V, degenerate doping |
+| 2 | Quasi-neutral conduction | field above velocity saturation, other temperatures |
+| 3 | Composition of 1 and 2 | — (inherits both, adds lumped RC) |
+| 4 | Forward injection | high-level injection ≈ 0.72 V, bias < 0.1 V |
+
+The word that matters is *dies at*. The formulas are in every textbook; the
+boundaries are where the engineering knowledge is, and the gap above 0.72 V is as
+much a result as any number in the table.
+
 ## Next regime
 
-Forward bias with injection. The depletion model's "low injection" and "no
-recombination current" assumptions both stop holding, the current becomes the
-quantity of interest rather than a side effect, and the ohmic-field gate finally
-gets a real operating point to test against. That is the first case where a model
-must be replaced rather than composed — and where the architecture has to say so
-instead of silently extending a validity range.
+High-level injection and space-charge recombination — the region where ideality
+factor 1 fails, which the current gate can detect but cannot yet describe. After
+that, self-heating: every model here is isothermal, and that assumption has never
+been tested.
