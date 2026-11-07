@@ -8,8 +8,8 @@ state what you expect a design to do, why you expect it, and under what
 conditions — then compute inside that declared regime and report how far the
 result can be trusted.
 
-The first model, an abrupt silicon PN junction, is deliberately small. It exists
-to fix the shape everything else will follow.
+The models included so far are deliberately small. They exist to fix the shape
+everything else will follow.
 
 ## The method
 
@@ -17,7 +17,7 @@ to fix the shape everything else will follow.
 claim  ->  regime  ->  parameters (with evidence)  ->  model  ->  result  ->  confidence
 ```
 
-Four rules hold this together:
+Five rules hold this together:
 
 1. **No result without a declared regime.** A model states where it applies; the
    engine checks the operating point against it. Outside the regime, the result is
@@ -28,6 +28,10 @@ Four rules hold this together:
    datasheet value, a measurement, an estimate or a fit — and the result says which.
 4. **Downstream numbers are derived, not retyped.** A result that feeds a later
    calculation records what it came from, and inherits its confidence.
+5. **Composition is never stronger than its weakest part.** Two results combine
+   only if they describe the same device, and the combination takes the weaker
+   confidence, inherits every failed gate, and *discharges* the assumptions it now
+   models explicitly.
 
 ### The three confidence levels
 
@@ -37,8 +41,8 @@ Four rules hold this together:
 | `model_bound` | Method valid in regime, but at least one input is an estimate or fit. The physics is fine; the numbers are soft. |
 | `extrapolated` | The declared regime was violated. Useful as an indication, not as a prediction. |
 
-Extrapolation always wins over soft evidence: an out-of-regime result is
-`extrapolated` no matter how good the inputs were.
+Extrapolation always wins: an out-of-regime result is `extrapolated` no matter how
+good the inputs were.
 
 ## The records
 
@@ -46,15 +50,20 @@ All in `prime/core.py`:
 
 - `Claim` — the assertion, the question it answers, its conditions, and what would refute it.
 - `Regime` — the executable domain of validity: temperature, bias window, approximations, what is ignored.
-- `Quantity` — a number, its unit, and its `Evidence` (kind, uncertainty, note).
+- `Quantity` — a number, its unit, and its `Evidence`.
 - `Evidence` — what the number rests on: `datasheet`, `process_spec`, `measurement`, `estimate`, `fitted`.
-- `Result` — value, basis, gates passed and failed, derived confidence, an auditable trace, and `derived_from`.
+- `Result` — value, basis, assumptions, gates passed and failed, derived confidence, an auditable trace, `derived_from`, and `device_id`.
 
-## Current model: abrupt PN junction
+Units are strings, asserted at every model boundary (`Quantity.require("cm^-3")`).
+A wrong unit raises `UnitMismatch`; it is never silently rescaled.
 
-`prime/models/pn_junction.py` — full-depletion approximation, uniform doping,
-abrupt junction, low injection, no series resistance. Reverse bias and weak
-forward bias only (−100 V to +0.3 V, reference temperature 300 K).
+## Models
+
+### `prime/models/pn_junction.py` — depletion capacitance
+
+Full-depletion approximation, uniform doping, abrupt junction, low injection, no
+series resistance. Reverse bias and weak forward bias (−100 V to +0.3 V, reference
+temperature 300 K).
 
 ```
 V_bi = (kT/q) ln(N_a N_d / n_i^2)
@@ -62,23 +71,42 @@ W    = sqrt(2 eps (V_bi - V) / q * (1/N_a + 1/N_d))
 C_j  = eps A / W
 ```
 
-Gates actually checked: bias inside the modelled window, non-degenerate doping,
-bias below the built-in potential, and intrinsic concentration used at its
-tabulated temperature. Units are asserted at every model boundary: cm, cm^-3,
-F, not metres.
-
+Gates checked: bias inside the modelled window, non-degenerate doping, bias below
+the built-in potential, intrinsic concentration used at its tabulated temperature.
 The regime's approximations are listed as assumptions, not reported as passing
-gates. Only checks that were performed are claimed.
+gates — only checks that were performed are claimed.
+
+### `prime/models/quasi_neutral.py` — series resistance
+
+Ohmic conduction in a uniformly doped region, valid where charge neutrality holds:
+`R = L / (q mu N A)`. Gated on non-degenerate doping and on the temperature the
+mobility was quoted at. The ohmic field assumption is made checkable separately via
+`check_ohmic_field`, because it depends on the operating current, which the
+resistance itself does not.
+
+### `prime/models/composition.py` — junction in series with series resistance
+
+The two models are valid under *different* assumptions, so they cannot be merged
+into one relation — only composed. `series_rc_bandwidth` gives the device's own RC
+ceiling, `f = 1 / (2 pi R_s C_j)`.
+
+Composition enforces three things:
+
+- `require_same_device` — results must name the same non-empty `device_id`; an
+  empty id counts as unmatched, because silence is not agreement;
+- confidence is `weakest(...)` of the parts, and failed gates propagate;
+- the junction's "no series resistance" assumption is **discharged**, not inherited.
+  Carrying it forward would make the composed result contradict itself.
 
 ## Usage
 
 ```bash
-python -m pytest -q                        # 17 tests
-python -m examples.junction_capacitance    # claim -> prediction -> verdict
+python -m pytest -q                        # 32 tests
+python -m examples.junction_capacitance    # claim -> predictions -> verdict
 ```
 
 ```python
-from prime import Claim, Evidence, Quantity
+from prime import Evidence, Quantity
 from prime.models import AbruptJunction, abrupt_pn_regime, junction_capacitance
 
 junction = AbruptJunction(
@@ -87,9 +115,14 @@ junction = AbruptJunction(
     area=Quantity(1e-4, "cm^2", Evidence("measurement", 0.02)),
 )
 
-result = junction_capacitance(junction, abrupt_pn_regime(), bias_v=-5.0)
+result = junction_capacitance(junction, abrupt_pn_regime(), bias_v=-5.0, device_id="D1")
 print(result.describe())   # C_j = 1.143e-12 F [model_bound]
 ```
+
+The example runs one claim through the full chain and answers a real question:
+at 5 V reverse bias the junction is 1.14 pF, giving 13.9 MHz into a 10 kΩ front
+end, while the device's own `R_s C_j` limit is 20.1 GHz — so the external resistor
+is the bottleneck, by a factor of ~1400.
 
 ## Extending it
 
@@ -105,8 +138,9 @@ If a feature cannot say those things, it does not belong yet.
 
 ## Next regime
 
-Series resistance. It is the first real test of the architecture, because it
-cannot be added as a better formula: the depletion model stays valid for the
-junction, while conduction in the quasi-neutral regions is valid under different
-assumptions. The two must be composed with separate validity ranges rather than
-merged into a single relation.
+Forward bias with injection. The depletion model's "low injection" and "no
+recombination current" assumptions both stop holding, the current becomes the
+quantity of interest rather than a side effect, and the ohmic-field gate finally
+gets a real operating point to test against. That is the first case where a model
+must be replaced rather than composed — and where the architecture has to say so
+instead of silently extending a validity range.

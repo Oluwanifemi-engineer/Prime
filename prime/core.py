@@ -45,6 +45,15 @@ class UnitMismatch(ValueError):
     """Raised when a quantity is used in a relation that expects another unit."""
 
 
+class ProvenanceMismatch(ValueError):
+    """Raised when two results about different devices are combined.
+
+    Composition is only meaningful between results that describe the same physical
+    thing. Combining a capacitance from one device with a resistance from another
+    produces a number that looks fine and means nothing.
+    """
+
+
 # --- Evidence and quantities -----------------------------------------------------
 
 
@@ -151,8 +160,10 @@ class Result:
     gates_passed: tuple[str, ...]
     gates_failed: tuple[str, ...]
     confidence: str
+    assumptions: tuple[str, ...] = ()
     trace: dict[str, Quantity] = field(default_factory=dict)
     derived_from: tuple[str, ...] = ()
+    device_id: str = ""
 
     @property
     def reliable(self) -> bool:
@@ -161,6 +172,8 @@ class Result:
     def describe(self) -> str:
         head = f"{self.quantity} = {self.value:.4g} {self.unit} [{self.confidence}]"
         lines = [head, f"  basis: {self.basis}"]
+        for assumption in self.assumptions:
+            lines.append(f"  assume: {assumption}")
         for gate in self.gates_passed:
             lines.append(f"  ok    : {gate}")
         for gate in self.gates_failed:
@@ -187,3 +200,9 @@ def derive_confidence(
     if any(q.is_soft for q in inputs):
         return MODEL_BOUND
     return GROUNDED
+
+
+def weakest(*levels: str) -> str:
+    """The weakest of several confidence levels. Composition is never stronger
+    than its weakest part."""
+    return max(levels, key=CONFIDENCE_ORDER.index)

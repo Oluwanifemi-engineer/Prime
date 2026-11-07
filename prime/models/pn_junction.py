@@ -23,8 +23,6 @@ from ..constants import (
     VACUUM_PERMITTIVITY_F_PER_CM,
 )
 from ..core import (
-    CONFIDENCE_ORDER,
-    EXTRAPOLATED,
     GROUNDED,
     MODEL_BOUND,
     Evidence,
@@ -32,6 +30,7 @@ from ..core import (
     Regime,
     Result,
     derive_confidence,
+    weakest,
 )
 
 # Doping above this is degenerate: the Boltzmann statistics behind V_bi break down.
@@ -116,7 +115,7 @@ def built_in_potential(junction: AbruptJunction, regime: Regime) -> tuple[float,
 
 
 def junction_capacitance(
-    junction: AbruptJunction, regime: Regime, bias_v: float
+    junction: AbruptJunction, regime: Regime, bias_v: float, device_id: str = ""
 ) -> Result:
     """Depletion capacitance at a given bias.
 
@@ -175,6 +174,8 @@ def junction_capacitance(
         gates_passed=tuple(passed),
         gates_failed=tuple(failed),
         confidence=derive_confidence(failed, junction.inputs),
+        assumptions=regime.approximations,
+        device_id=device_id,
         trace={
             "built_in_potential": Quantity(v_bi, "V"),
             "depletion_width": Quantity(width, "cm"),
@@ -196,22 +197,25 @@ def single_pole_cutoff(resistance: Quantity, capacitance: Result) -> Result:
 
     frequency = 1.0 / (2.0 * math.pi * resistance.value * capacitance.value)
 
-    confidence = capacitance.confidence
-    if resistance.is_soft and CONFIDENCE_ORDER.index(confidence) < CONFIDENCE_ORDER.index(
-        MODEL_BOUND
-    ):
-        confidence = MODEL_BOUND
-    if capacitance.gates_failed and confidence != EXTRAPOLATED:
-        confidence = EXTRAPOLATED
+    # One rule for confidence everywhere: the weakest link decides.
+    confidence = weakest(
+        capacitance.confidence,
+        MODEL_BOUND if resistance.is_soft else GROUNDED,
+    )
 
     return Result(
         quantity="cutoff_frequency",
         value=frequency,
         unit="Hz",
         basis="analytic: f = 1/(2 pi R C), single pole, ideal R, no package parasitics",
-        gates_passed=("ideal single-pole response",),
+        gates_passed=("capacitance supplied in F",),
         gates_failed=capacitance.gates_failed,
         confidence=confidence,
+        assumptions=(
+            "ideal single-pole response",
+            "no package or lead parasitics",
+        ),
+        device_id=capacitance.device_id,
         trace={
             "capacitance_used": Quantity(capacitance.value, "F"),
             "resistance": resistance,
