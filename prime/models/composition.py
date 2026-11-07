@@ -102,6 +102,9 @@ def series_rc_bandwidth(resistance: Result, capacitance: Result) -> Result:
             )
         ),
         device_id=device_id,
+        # Floors simply accumulate: relative_floor combines them in quadrature, and
+        # no amount of modelling effort can discharge one.
+        floors=capacitance.floors + resistance.floors,
         trace={
             "time_constant": Quantity(time_constant, "s"),
             "series_resistance_used": Quantity(resistance.value, "ohm"),

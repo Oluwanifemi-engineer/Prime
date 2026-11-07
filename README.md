@@ -44,6 +44,36 @@ Five rules hold this together:
 Extrapolation always wins: an out-of-regime result is `extrapolated` no matter how
 good the inputs were.
 
+## Confidence and floors are different axes
+
+Confidence answers *do I believe my method*. A **floor** answers *what is the best
+anyone could know*. They are orthogonal, and Prime keeps them apart:
+
+| | Confidence | Floor |
+|---|---|---|
+| Source | our method, our data | nature |
+| Improves with | better models, better measurements | nothing — only changing the device |
+| Value | `grounded` / `model_bound` / `extrapolated` | a relative spread with a named mechanism |
+
+A result can be `grounded` and still only knowable to 110 ppm, because the charge
+in the space-charge region is made of 8.2 × 10⁷ countable, discrete dopants. A
+theory that reported 1.143 pF to five significant figures would be claiming
+precision nature does not permit.
+
+That ratio is the tool's real output. For CJ-0001: the physical floor on C_j is
+110 ppm (0.126 fF), while the chosen falsification band is 31% — **2,834× the
+floor**. The claim is therefore testable rather than merely believable, and the
+experiment that settles it needs only ~0.1% resolution. Had the band been *below*
+the floor, no experiment could settle it and the claim would be a belief.
+
+Floors come in two kinds, and conflating them is a category error:
+
+- `parameter` — irreducible variation in the device itself: discrete dopants, thermal fluctuation.
+- `readout` — a limit on how well the quantity can be observed (kT/C noise, instrument resolution), not on what it is.
+
+Floors combine in quadrature through composition, because the mechanisms are
+independent. No amount of evidence discharges one.
+
 ## The records
 
 All in `prime/core.py`:
@@ -52,7 +82,8 @@ All in `prime/core.py`:
 - `Regime` — the executable domain of validity: temperature, bias window, approximations, what is ignored.
 - `Quantity` — a number, its unit, and its `Evidence`.
 - `Evidence` — what the number rests on: `datasheet`, `process_spec`, `measurement`, `estimate`, `fitted`.
-- `Result` — value, basis, assumptions, gates passed and failed, derived confidence, an auditable trace, `derived_from`, and `device_id`.
+- `Result` — value, basis, assumptions, gates passed and failed, derived confidence, floors, an auditable trace, `derived_from`, and `device_id`.
+- `Floor` — a named irreducible mechanism and its relative spread, plus `dopant_floor` for the 1/√N case.
 
 Units are strings, asserted at every model boundary (`Quantity.require("cm^-3")`).
 A wrong unit raises `UnitMismatch`; it is never silently rescaled.
@@ -101,7 +132,7 @@ Composition enforces three things:
 ## Usage
 
 ```bash
-python -m pytest -q                        # 32 tests
+python -m pytest -q                        # 43 tests
 python -m examples.junction_capacitance    # claim -> predictions -> verdict
 ```
 

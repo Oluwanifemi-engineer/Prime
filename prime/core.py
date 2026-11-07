@@ -11,11 +11,15 @@ Every model in the system speaks these records and nothing else. The rules:
 3. Every intermediate worth auditing is kept in the result's trace.
 4. A downstream number records which result it was derived from.
 
+And one distinction the records must preserve: confidence is about *us*, a floor
+is about *nature*.
+
 If a new capability cannot fill in these records, it does not belong yet.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 # --- Confidence -----------------------------------------------------------------
@@ -52,6 +56,71 @@ class ProvenanceMismatch(ValueError):
     thing. Combining a capacitance from one device with a resistance from another
     produces a number that looks fine and means nothing.
     """
+
+
+# --- Floors ----------------------------------------------------------------------
+# A floor is the irreducible spread a quantity has *as a fact about nature*, not as a
+# fact about our knowledge. It does not improve with better data, better instruments
+# or better models: it improves only by changing the device (area, doping, temperature).
+# Confidence and floors are orthogonal. A result can be GROUNDED and still have a floor:
+# the method may be perfect and the answer still only knowable to 1 part in 10^4.
+
+PARAMETER_FLOOR = "parameter"
+"""Irreducible variation in the device itself: discrete dopants, thermal fluctuation."""
+
+READOUT_FLOOR = "readout"
+"""A limit on how well the quantity can be observed or used, not on what it is."""
+
+FLOOR_KINDS = frozenset({PARAMETER_FLOOR, READOUT_FLOOR})
+
+
+@dataclass(frozen=True)
+class Floor:
+    """The best knowledge nature permits, with the mechanism that sets it.
+
+    Stored as a relative (dimensionless) spread so that floors compose; the
+    absolute figure is recovered against whichever result carries them.
+    """
+
+    mechanism: str
+    kind: str
+    relative: float
+    basis: str
+
+    def __post_init__(self) -> None:
+        if self.kind not in FLOOR_KINDS:
+            raise ValueError(
+                f"unknown floor kind {self.kind!r}; expected one of {sorted(FLOOR_KINDS)}"
+            )
+        if self.relative < 0:
+            raise ValueError("a floor is a spread: relative must be non-negative")
+
+
+def quadrature(*values: float) -> float:
+    """Combine independent relative spreads.
+
+    Exact for products and quotients of independent quantities; a conservative
+    over-estimate for sums. Every composition in Prime so far is multiplicative, and
+    the docstring says so rather than implying the rule is universal.
+    """
+    return math.sqrt(sum(v * v for v in values))
+
+
+def dopant_floor(mechanism: str, counts: float, basis: str) -> Floor:
+    """The floor set by charge being made of countable, discrete carriers.
+
+    A quantity built from N independent ionised dopants cannot be known better than
+    1/sqrt(N) relative, no matter how good the theory or the instrument. This is the
+    same physics that sets device-to-device mismatch.
+    """
+    if counts <= 0:
+        raise ValueError("dopant count must be positive")
+    return Floor(
+        mechanism=mechanism,
+        kind=PARAMETER_FLOOR,
+        relative=1.0 / math.sqrt(counts),
+        basis=basis,
+    )
 
 
 # --- Evidence and quantities -----------------------------------------------------
@@ -164,10 +233,21 @@ class Result:
     trace: dict[str, Quantity] = field(default_factory=dict)
     derived_from: tuple[str, ...] = ()
     device_id: str = ""
+    floors: tuple[Floor, ...] = ()
 
     @property
     def reliable(self) -> bool:
         return self.confidence != EXTRAPOLATED
+
+    @property
+    def relative_floor(self) -> float:
+        """Combined relative spread nature imposes on this quantity."""
+        return quadrature(*(f.relative for f in self.floors))
+
+    @property
+    def floor_value(self) -> float:
+        """The floor as an absolute spread, in this result's own unit."""
+        return self.value * self.relative_floor
 
     def describe(self) -> str:
         head = f"{self.quantity} = {self.value:.4g} {self.unit} [{self.confidence}]"
@@ -178,6 +258,16 @@ class Result:
             lines.append(f"  ok    : {gate}")
         for gate in self.gates_failed:
             lines.append(f"  FAILED: {gate}")
+        for floor in self.floors:
+            lines.append(
+                f"  floor : {floor.relative:.3g} relative "
+                f"({floor.relative * 1e6:.3g} ppm) - {floor.mechanism}: {floor.basis}"
+            )
+        if self.floors:
+            lines.append(
+                f"  floor : combined {self.relative_floor:.3g} relative "
+                f"= {self.floor_value:.3g} {self.unit} (irreducible)"
+            )
         for name, quantity in self.trace.items():
             lines.append(f"  trace : {name} = {quantity.value:.6g} {quantity.unit}")
         if self.derived_from:

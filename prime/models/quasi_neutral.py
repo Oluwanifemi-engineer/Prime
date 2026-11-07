@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..constants import ELEMENTARY_CHARGE_C
-from ..core import Evidence, Quantity, Regime, Result, derive_confidence
+from ..core import Quantity, Regime, Result, derive_confidence, dopant_floor
 
 # Field at which drift velocity stops being proportional to field. Ohmic
 # conduction requires staying well below this.
@@ -124,6 +124,15 @@ def resistance(
         confidence=derive_confidence(failed, region.inputs),
         assumptions=regime.approximations,
         device_id=device_id,
+        # Conductance averages over every dopant in the conducting volume, so a
+        # long, fat region is far more predictable than a short, thin one.
+        floors=(
+            dopant_floor(
+                "random dopant fluctuation in the conducting volume",
+                region.doping.value * region.length.value * region.area.value,
+                "1/sqrt(N) over the dopants in the region",
+            ),
+        ),
         trace={
             "conductivity": Quantity(conductivity, "S/cm"),
             "length": region.length,

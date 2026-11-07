@@ -54,6 +54,9 @@ P_REGION = QuasiNeutralRegion(
 
 EXTERNAL_R = Quantity(1.0e4, "ohm", Evidence("datasheet", 0.01, "10 kohm, 1% part"))
 
+# The value above which CJ-0001 is refuted. Set by the decision, not by the model.
+FALSIFICATION_LIMIT_F = 1.5e-12
+
 
 def main() -> None:
     regime = abrupt_pn_regime()
@@ -69,7 +72,7 @@ def main() -> None:
         print(result.describe())
         print()
 
-    holds = capacitance.value <= 1.5e-12 and external_limit.value >= 10e6
+    holds = capacitance.value <= FALSIFICATION_LIMIT_F and external_limit.value >= 10e6
     device_is_bottleneck = device_limit.value < external_limit.value
     print(f"capacitance claim: {'HOLDS' if holds else 'REFUTED'}")
     print(
@@ -78,6 +81,19 @@ def main() -> None:
     )
     print(f"device limit is {device_limit.value / external_limit.value:.0f}x the external limit")
     print(f"would be refuted if: {CLAIM.falsified_if}")
+
+    # The floor is what nature allows; the falsification band is what we chose to
+    # care about. Their ratio says whether this claim can be settled by experiment
+    # at all, and which instrument resolution would be required to settle it.
+    room = FALSIFICATION_LIMIT_F - capacitance.value
+    print(
+        f"physical floor on C_j: {capacitance.floor_value:.3g} F "
+        f"({capacitance.relative_floor * 1e6:.3g} ppm, irreducible)"
+    )
+    print(
+        f"falsification band is {room / capacitance.floor_value:.0f}x the physical "
+        "floor: testable, not merely believable"
+    )
 
 
 if __name__ == "__main__":

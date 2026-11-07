@@ -30,6 +30,7 @@ from ..core import (
     Regime,
     Result,
     derive_confidence,
+    dopant_floor,
     weakest,
 )
 
@@ -166,6 +167,26 @@ def junction_capacitance(
         )
         capacitance = junction.permittivity * junction.area.value / width
 
+    # The irreducible floor. Charge neutrality fixes the ionised charge per unit
+    # area to be equal on both sides, so the count is N_eff * W * A with N_eff the
+    # series combination of the two dopings -- there is no freedom to choose the
+    # more flattering side.
+    effective_doping = 1.0 / (
+        1.0 / junction.acceptor_density.value + 1.0 / junction.donor_density.value
+    )
+    dopants = effective_doping * width * junction.area.value
+    floors = (
+        (
+            dopant_floor(
+                "random dopant fluctuation in the depleted charge",
+                dopants,
+                f"1/sqrt(N) for the {dopants:.3g} ionised dopants setting the space charge",
+            ),
+        )
+        if width > 0.0
+        else ()
+    )
+
     return Result(
         quantity="junction_capacitance",
         value=capacitance,
@@ -176,6 +197,7 @@ def junction_capacitance(
         confidence=derive_confidence(failed, junction.inputs),
         assumptions=regime.approximations,
         device_id=device_id,
+        floors=floors,
         trace={
             "built_in_potential": Quantity(v_bi, "V"),
             "depletion_width": Quantity(width, "cm"),
@@ -216,6 +238,8 @@ def single_pole_cutoff(resistance: Quantity, capacitance: Result) -> Result:
             "no package or lead parasitics",
         ),
         device_id=capacitance.device_id,
+        # The same capacitance, so the same physical floor travels with it.
+        floors=capacitance.floors,
         trace={
             "capacitance_used": Quantity(capacitance.value, "F"),
             "resistance": resistance,
