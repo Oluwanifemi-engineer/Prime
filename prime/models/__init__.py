@@ -1,9 +1,16 @@
 """Device models: the junction, the quasi-neutral region, and their composition."""
 
 from .composition import require_same_device, series_rc_bandwidth
+from .forward_high_level import (
+    IDEALITY_FACTOR_HIGH_LEVEL,
+    high_level_current,
+    high_level_regime,
+    high_level_saturation_current,
+)
 from .forward_injection import (
     DiffusionDiode,
     boundary_injected_density,
+    crossover_voltage,
     diffusion_length,
     forward_current,
     forward_regime,
@@ -27,14 +34,19 @@ from .quasi_neutral import (
 __all__ = [
     "AbruptJunction",
     "DiffusionDiode",
+    "IDEALITY_FACTOR_HIGH_LEVEL",
     "QuasiNeutralRegion",
     "abrupt_pn_regime",
     "boundary_injected_density",
     "built_in_potential",
     "check_ohmic_field",
+    "crossover_voltage",
     "diffusion_length",
     "forward_current",
     "forward_regime",
+    "high_level_current",
+    "high_level_regime",
+    "high_level_saturation_current",
     "junction_capacitance",
     "ohmic_regime",
     "require_same_device",

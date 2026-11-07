@@ -113,6 +113,22 @@ def diffusion_length(diffusivity: float, lifetime: float) -> float:
     return math.sqrt(diffusivity * lifetime)
 
 
+def crossover_voltage(diode: "DiffusionDiode", thermal_voltage: float) -> float:
+    """The bias at which injection stops being low-level, in volts.
+
+    Solved from p_n0 exp(V/V_T) = N_d, i.e. V_x = 2 V_T ln(N_d / n_i), with the
+    lighter-doped side deciding which boundary arrives first.
+
+    This model fails above V_x; the high-level model begins at it. Both call this
+    function, so the two can never disagree about where the handover is.
+    """
+    n_i = SILICON_INTRINSIC_CM3_AT_300K
+    return min(
+        2.0 * thermal_voltage * math.log(diode.donor_density.value / n_i),
+        2.0 * thermal_voltage * math.log(diode.acceptor_density.value / n_i),
+    )
+
+
 def saturation_current(
     diode: DiffusionDiode, regime: Regime
 ) -> tuple[float, dict[str, Quantity], list[str]]:
@@ -209,21 +225,18 @@ def forward_current(
     p_injected = boundary_injected_density(
         diode.donor_density.value, diode.acceptor_density.value, bias_v, thermal_voltage, "n"
     )
-    n_injected = boundary_injected_density(
-        diode.donor_density.value, diode.acceptor_density.value, bias_v, thermal_voltage, "p"
+    trace["injected_over_majority"] = Quantity(
+        p_injected / diode.donor_density.value, "1"
     )
-    if p_injected >= diode.donor_density.value:
+
+    v_x = crossover_voltage(diode, thermal_voltage)
+    if bias_v >= v_x:
         failed.append(
-            f"high-level injection: injected holes {p_injected:.3g} cm^-3 reach the "
-            f"n-side doping {diode.donor_density.value:.3g} cm^-3 at {bias_v:.3g} V"
+            f"high-level injection: bias {bias_v:.3g} V at or above the crossover "
+            f"{v_x:.4g} V, where the injected density reaches the majority doping"
         )
-    if n_injected >= diode.acceptor_density.value:
-        failed.append(
-            f"high-level injection: injected electrons {n_injected:.3g} cm^-3 reach the "
-            f"p-side doping {diode.acceptor_density.value:.3g} cm^-3 at {bias_v:.3g} V"
-        )
-    if p_injected < diode.donor_density.value and n_injected < diode.acceptor_density.value:
-        passed.append("low-level injection holds on both sides")
+    else:
+        passed.append(f"low-level injection holds up to the {v_x:.4g} V crossover")
 
     current = i_s * math.expm1(bias_v / thermal_voltage) if bias_v >= 0.0 else -i_s
 

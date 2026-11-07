@@ -135,6 +135,33 @@ honest output is an empty region is worth more than one that always has an answe
 It also carries the only readout floor so far: `measurement_bandwidth_hz` is optional,
 because a shot-noise limit is a property of the measurement, not of the device.
 
+### `prime/models/forward_high_level.py` — the crossover
+
+`I = I_2 exp(V/(nV_T))` with `n = 2`, where `I_2 = I_s exp(V_x/(2V_T))` and `V_x` is
+the bias at which the injected density reaches the majority doping. For the example
+device `V_x = 0.7143 V`.
+
+Two things make this more than a second formula:
+
+- **Continuity is structural.** `I_2` is *derived* from the low-level `I_s` at `V_x`,
+  so the two models meet to machine precision (relative jump ~4 × 10⁻⁸) and cannot
+drift apart. `crossover_voltage` lives in one place and both models call it: the
+  low-level model fails at exactly the voltage the high-level model begins.
+- **The ceiling is checked, not hard-coded.** This model assumes no series
+  resistance. Rather than pick a universal voltage bound — which would be a
+  device-independent claim about a device-dependent effect — it accepts the region's
+  resistance as a `Quantity` or a `Result` and gates on whether the neglected drop
+  exceeds half a thermal voltage.
+
+```
+0.75 V, R_s = 6.94 ohm  -> model_bound
+0.77 V, R_s = 6.94 ohm  -> extrapolated: drops 13.1 mV (0.5 V_T) at 1.88 mA
+0.80 V, R_s = 0.5 ohm   -> model_bound   (a different device reaches further)
+```
+
+That last line is the point: how far a model reaches is a property of the device, so
+it is computed rather than declared.
+
 ### `prime/models/composition.py` — junction in series with series resistance
 
 The two models are valid under *different* assumptions, so they cannot be merged
@@ -152,7 +179,7 @@ Composition enforces three things:
 ## Usage
 
 ```bash
-python -m pytest -q                        # 58 tests
+python -m pytest -q                        # 73 tests
 python -m examples.junction_capacitance    # claim -> predictions -> verdict
 python -m examples.forward_bias            # replacement, and the edge of the map
 ```
@@ -195,15 +222,21 @@ If a feature cannot say those things, it does not belong yet.
 | 1 | Depletion capacitance | forward bias > 0.3 V, degenerate doping |
 | 2 | Quasi-neutral conduction | field above velocity saturation, other temperatures |
 | 3 | Composition of 1 and 2 | — (inherits both, adds lumped RC) |
-| 4 | Forward injection | high-level injection ≈ 0.72 V, bias < 0.1 V |
+| 4 | Forward injection (n = 1) | high-level injection at 0.714 V |
+| 5 | High-level injection (n = 2) | neglected series drop > 0.5 V_T (~0.77 V here) |
 
 The word that matters is *dies at*. The formulas are in every textbook; the
-boundaries are where the engineering knowledge is, and the gap above 0.72 V is as
-much a result as any number in the table.
+boundaries are where the engineering knowledge is.
+
+Case 5 closed the gap case 4 opened, and immediately exposed the next one: at 0.77 V
+the voltage dropped across the series resistance is already half a thermal voltage.
+That is not a modelling failure, it is the honest end of the current model's reach —
+and the next case has to include the resistance instead of neglecting it.
 
 ## Next regime
 
-High-level injection and space-charge recombination — the region where ideality
-factor 1 fails, which the current gate can detect but cannot yet describe. After
-that, self-heating: every model here is isothermal, and that assumption has never
-been tested.
+Series-corrected forward conduction, where the junction voltage is `V - I R_s` and
+the current has to be solved self-consistently. It is the first composition that is
+not a product of two results: an implicit relation, solved rather than multiplied.
+After that, self-heating: every model here is isothermal, and that assumption has
+never been tested.
